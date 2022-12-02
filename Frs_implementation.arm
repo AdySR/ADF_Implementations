@@ -1,0 +1,373 @@
+{
+    "name": "ppFrsXmlDailyFeedBlob",
+    "properties": {
+        "activities": [
+            {
+                "name": "Get FileNames",
+                "type": "GetMetadata",
+                "dependsOn": [],
+                "policy": {
+                    "timeout": "7.00:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "dataset": {
+                        "referenceName": "frsxmldailyfeed_blobStorage",
+                        "type": "DatasetReference",
+                        "parameters": {
+                            "Folder": {
+                                "value": "@pipeline().parameters.FileFolderPath",
+                                "type": "Expression"
+                            }
+                        }
+                    },
+                    "fieldList": [
+                        "childItems"
+                    ],
+                    "storeSettings": {
+                        "type": "AzureBlobStorageReadSettings",
+                        "recursive": true,
+                        "enablePartitionDiscovery": false
+                    },
+                    "formatSettings": {
+                        "type": "DelimitedTextReadSettings"
+                    }
+                }
+            },
+            {
+                "name": "Taking only Frs file ending with txt",
+                "type": "Filter",
+                "dependsOn": [
+                    {
+                        "activity": "Get FileNames",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "userProperties": [],
+                "typeProperties": {
+                    "items": {
+                        "value": "@activity('Get FileNames').output.childItems",
+                        "type": "Expression"
+                    },
+                    "condition": {
+                        "value": "@and(equals(item().type, 'File'),and(startswith(item().name,'Pull4T'),endswith(item().name,'txt')))",
+                        "type": "Expression"
+                    }
+                }
+            },
+            {
+                "name": "For Each File Filtered",
+                "type": "ForEach",
+                "dependsOn": [
+                    {
+                        "activity": "Taking only Frs file ending with txt",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "userProperties": [],
+                "typeProperties": {
+                    "items": {
+                        "value": "@activity('Taking only Frs file ending with txt').output.Value",
+                        "type": "Expression"
+                    },
+                    "activities": [
+                        {
+                            "name": "FrsXmlDailyFeedBlobStage Loading",
+                            "type": "Copy",
+                            "dependsOn": [],
+                            "policy": {
+                                "timeout": "7.00:00:00",
+                                "retry": 0,
+                                "retryIntervalInSeconds": 30,
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "userProperties": [],
+                            "typeProperties": {
+                                "source": {
+                                    "type": "DelimitedTextSource",
+                                    "additionalColumns": [
+                                        {
+                                            "name": "LoadedTimeStamp",
+                                            "value": {
+                                                "value": "@utcnow()",
+                                                "type": "Expression"
+                                            }
+                                        },
+                                        {
+                                            "name": "FileName",
+                                            "value": {
+                                                "value": "@item().name",
+                                                "type": "Expression"
+                                            }
+                                        }
+                                    ],
+                                    "storeSettings": {
+                                        "type": "AzureBlobStorageReadSettings",
+                                        "recursive": false,
+                                        "enablePartitionDiscovery": false
+                                    },
+                                    "formatSettings": {
+                                        "type": "DelimitedTextReadSettings"
+                                    }
+                                },
+                                "sink": {
+                                    "type": "SqlMISink",
+                                    "preCopyScript": "\n",
+                                    "writeBehavior": "upsert",
+                                    "upsertSettings": {
+                                        "useTempDB": true,
+                                        "keys": [
+                                            "FileName"
+                                        ]
+                                    },
+                                    "sqlWriterUseTableLock": true
+                                },
+                                "enableStaging": false,
+                                "translator": {
+                                    "type": "TabularTranslator",
+                                    "mappings": [
+                                        {
+                                            "source": {
+                                                "type": "String",
+                                                "ordinal": 1
+                                            },
+                                            "sink": {
+                                                "name": "XMLDATA_String",
+                                                "type": "String"
+                                            }
+                                        },
+                                        {
+                                            "source": {
+                                                "name": "LoadedTimeStamp",
+                                                "type": "String"
+                                            },
+                                            "sink": {
+                                                "name": "LoadedDate",
+                                                "type": "String"
+                                            }
+                                        },
+                                        {
+                                            "source": {
+                                                "name": "FileName",
+                                                "type": "String"
+                                            },
+                                            "sink": {
+                                                "name": "FileName",
+                                                "type": "String"
+                                            }
+                                        }
+                                    ]
+                                }
+                            },
+                            "inputs": [
+                                {
+                                    "referenceName": "FrsXmlDailyFeedBlob",
+                                    "type": "DatasetReference",
+                                    "parameters": {
+                                        "ContainerName": {
+                                            "value": "@pipeline().parameters.Container",
+                                            "type": "Expression"
+                                        },
+                                        "FileName": {
+                                            "value": "@item().name",
+                                            "type": "Expression"
+                                        }
+                                    }
+                                }
+                            ],
+                            "outputs": [
+                                {
+                                    "referenceName": "FrsXmlDailyFeedBlob_Table",
+                                    "type": "DatasetReference"
+                                }
+                            ]
+                        },
+                        {
+                            "name": "Run usp_FrsXmlDailyFeedLoadToTransient",
+                            "type": "Lookup",
+                            "dependsOn": [
+                                {
+                                    "activity": "FrsXmlDailyFeedBlobStage Loading",
+                                    "dependencyConditions": [
+                                        "Succeeded"
+                                    ]
+                                }
+                            ],
+                            "policy": {
+                                "timeout": "7.00:00:00",
+                                "retry": 0,
+                                "retryIntervalInSeconds": 30,
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "userProperties": [],
+                            "typeProperties": {
+                                "source": {
+                                    "type": "SqlMISource",
+                                    "sqlReaderStoredProcedureName": "[dbo].[usp_FrsXmlDailyFeedLoadToTransient]",
+                                    "partitionOption": "None"
+                                },
+                                "dataset": {
+                                    "referenceName": "DataLake_Flat_File",
+                                    "type": "DatasetReference"
+                                }
+                            }
+                        },
+                        {
+                            "name": "Move File After execution",
+                            "type": "Copy",
+                            "dependsOn": [
+                                {
+                                    "activity": "Run usp_FrsXmlDailyFeedLoadToTransient",
+                                    "dependencyConditions": [
+                                        "Succeeded"
+                                    ]
+                                }
+                            ],
+                            "policy": {
+                                "timeout": "7.00:00:00",
+                                "retry": 0,
+                                "retryIntervalInSeconds": 30,
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "userProperties": [],
+                            "typeProperties": {
+                                "source": {
+                                    "type": "DelimitedTextSource",
+                                    "storeSettings": {
+                                        "type": "AzureBlobStorageReadSettings",
+                                        "recursive": false,
+                                        "enablePartitionDiscovery": false
+                                    },
+                                    "formatSettings": {
+                                        "type": "DelimitedTextReadSettings"
+                                    }
+                                },
+                                "sink": {
+                                    "type": "DelimitedTextSink",
+                                    "storeSettings": {
+                                        "type": "AzureBlobStorageWriteSettings"
+                                    },
+                                    "formatSettings": {
+                                        "type": "DelimitedTextWriteSettings",
+                                        "quoteAllText": true,
+                                        "fileExtension": ".txt"
+                                    }
+                                },
+                                "enableStaging": false
+                            },
+                            "inputs": [
+                                {
+                                    "referenceName": "FrsXmlDailyFeedBlob",
+                                    "type": "DatasetReference",
+                                    "parameters": {
+                                        "ContainerName": {
+                                            "value": "@pipeline().parameters.Container",
+                                            "type": "Expression"
+                                        },
+                                        "FileName": {
+                                            "value": "@item().name",
+                                            "type": "Expression"
+                                        }
+                                    }
+                                }
+                            ],
+                            "outputs": [
+                                {
+                                    "referenceName": "FrsXmlDailyFeedBlob_Archive",
+                                    "type": "DatasetReference",
+                                    "parameters": {
+                                        "ContainerName": {
+                                            "value": "@pipeline().parameters.Container",
+                                            "type": "Expression"
+                                        },
+                                        "FileName": {
+                                            "value": "@item().name",
+                                            "type": "Expression"
+                                        }
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            "name": "Delete Source file",
+                            "type": "Delete",
+                            "dependsOn": [
+                                {
+                                    "activity": "Move File After execution",
+                                    "dependencyConditions": [
+                                        "Succeeded"
+                                    ]
+                                }
+                            ],
+                            "policy": {
+                                "timeout": "7.00:00:00",
+                                "retry": 0,
+                                "retryIntervalInSeconds": 30,
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "userProperties": [],
+                            "typeProperties": {
+                                "dataset": {
+                                    "referenceName": "FrsXmlDailyFeedBlob",
+                                    "type": "DatasetReference",
+                                    "parameters": {
+                                        "ContainerName": {
+                                            "value": "@pipeline().parameters.Container",
+                                            "type": "Expression"
+                                        },
+                                        "FileName": {
+                                            "value": "@item().name",
+                                            "type": "Expression"
+                                        }
+                                    }
+                                },
+                                "enableLogging": false,
+                                "storeSettings": {
+                                    "type": "AzureBlobStorageReadSettings",
+                                    "recursive": false,
+                                    "enablePartitionDiscovery": false
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        ],
+        "parameters": {
+            "Container": {
+                "type": "string",
+                "defaultValue": "frsxmldailyfeed"
+            },
+            "ProjectName": {
+                "type": "string",
+                "defaultValue": "ppXml_FRSsysLoadToTransient"
+            },
+            "PipelineVersionID": {
+                "type": "string",
+                "defaultValue": "1.0"
+            },
+            "FileFolderPath": {
+                "type": "string",
+                "defaultValue": "frsxmldailyfeed/"
+            }
+        },
+        "folder": {
+            "name": "Blob_To_DL"
+        },
+        "annotations": [],
+        "lastPublishTime": "2021-03-25T19:19:11Z"
+    },
+    "type": "Microsoft.DataFactory/factories/pipelines"
+}
