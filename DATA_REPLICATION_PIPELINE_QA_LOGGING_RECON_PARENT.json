@@ -1,0 +1,630 @@
+{
+    "name": "DATA_REPLICATION_PIPELINE_QA_LOGGING_RECON_PARENT",
+    "properties": {
+        "description": "This pipeline is to replicate the data from production to Test (QA) which includes both full load and incremental load",
+        "activities": [
+            {
+                "name": "ForEach",
+                "type": "ForEach",
+                "dependsOn": [
+                    {
+                        "activity": "GET_TABLE_NAMES",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "userProperties": [],
+                "typeProperties": {
+                    "items": {
+                        "value": "@activity('GET_TABLE_NAMES').output.value",
+                        "type": "Expression"
+                    },
+                    "batchCount": 8,
+                    "activities": [
+                        {
+                            "name": "INCREMENTAL LOAD OR FULL LOAD CHECK",
+                            "type": "IfCondition",
+                            "dependsOn": [
+                                {
+                                    "activity": "Inititate Base Table Logging",
+                                    "dependencyConditions": [
+                                        "Succeeded"
+                                    ]
+                                }
+                            ],
+                            "userProperties": [],
+                            "typeProperties": {
+                                "expression": {
+                                    "value": "@equals(item().LOADTYPE,'I')",
+                                    "type": "Expression"
+                                },
+                                "ifFalseActivities": [
+                                    {
+                                        "name": "FULL LOAD POLYBASE",
+                                        "type": "Copy",
+                                        "dependsOn": [],
+                                        "policy": {
+                                            "timeout": "0.23:59:59",
+                                            "retry": 0,
+                                            "retryIntervalInSeconds": 30,
+                                            "secureOutput": false,
+                                            "secureInput": false
+                                        },
+                                        "userProperties": [],
+                                        "typeProperties": {
+                                            "source": {
+                                                "type": "SqlDWSource",
+                                                "queryTimeout": "02:00:00",
+                                                "partitionOption": "None"
+                                            },
+                                            "sink": {
+                                                "type": "SqlDWSink",
+                                                "preCopyScript": {
+                                                    "value": "TRUNCATE TABLE @{concat(item().SCHEMA_NAME,'.',item().TABLE_NAME)};",
+                                                    "type": "Expression"
+                                                },
+                                                "allowPolyBase": true,
+                                                "polyBaseSettings": {
+                                                    "rejectValue": 0,
+                                                    "rejectType": "value",
+                                                    "useTypeDefault": true
+                                                },
+                                                "disableMetricsCollection": false
+                                            },
+                                            "enableStaging": true,
+                                            "stagingSettings": {
+                                                "linkedServiceName": {
+                                                    "referenceName": "ADLS_Stg_CDCLoad",
+                                                    "type": "LinkedServiceReference"
+                                                },
+                                                "path": "celonisprod/Staging"
+                                            }
+                                        },
+                                        "inputs": [
+                                            {
+                                                "referenceName": "DS_SYNAPSE01P",
+                                                "type": "DatasetReference",
+                                                "parameters": {
+                                                    "schemaname": {
+                                                        "value": "@item().SCHEMA_NAME",
+                                                        "type": "Expression"
+                                                    },
+                                                    "tablename": {
+                                                        "value": "@item().TABLE_NAME",
+                                                        "type": "Expression"
+                                                    }
+                                                }
+                                            }
+                                        ],
+                                        "outputs": [
+                                            {
+                                                "referenceName": "DS_SYNAPSE01T",
+                                                "type": "DatasetReference",
+                                                "parameters": {
+                                                    "schemaname": {
+                                                        "value": "@item().SCHEMA_NAME",
+                                                        "type": "Expression"
+                                                    },
+                                                    "tablename": {
+                                                        "value": "@item().TABLE_NAME",
+                                                        "type": "Expression"
+                                                    }
+                                                }
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "name": "FULL LOAD BULKINSERT",
+                                        "type": "Copy",
+                                        "dependsOn": [
+                                            {
+                                                "activity": "FULL LOAD POLYBASE",
+                                                "dependencyConditions": [
+                                                    "Failed"
+                                                ]
+                                            }
+                                        ],
+                                        "policy": {
+                                            "timeout": "0.23:59:59",
+                                            "retry": 0,
+                                            "retryIntervalInSeconds": 30,
+                                            "secureOutput": false,
+                                            "secureInput": false
+                                        },
+                                        "userProperties": [],
+                                        "typeProperties": {
+                                            "source": {
+                                                "type": "SqlDWSource",
+                                                "queryTimeout": "02:00:00",
+                                                "partitionOption": "None"
+                                            },
+                                            "sink": {
+                                                "type": "SqlDWSink",
+                                                "preCopyScript": {
+                                                    "value": "TRUNCATE TABLE @{concat(item().SCHEMA_NAME,'.',item().TABLE_NAME)};",
+                                                    "type": "Expression"
+                                                },
+                                                "writeBehavior": "Insert",
+                                                "sqlWriterUseTableLock": false,
+                                                "disableMetricsCollection": false
+                                            },
+                                            "enableStaging": true,
+                                            "stagingSettings": {
+                                                "linkedServiceName": {
+                                                    "referenceName": "ADLS_Stg_CDCLoad",
+                                                    "type": "LinkedServiceReference"
+                                                },
+                                                "path": "celonisprod/Staging"
+                                            },
+                                            "translator": {
+                                                "type": "TabularTranslator",
+                                                "typeConversion": true,
+                                                "typeConversionSettings": {
+                                                    "allowDataTruncation": true,
+                                                    "treatBooleanAsNumber": false
+                                                }
+                                            }
+                                        },
+                                        "inputs": [
+                                            {
+                                                "referenceName": "DS_SYNAPSE01P",
+                                                "type": "DatasetReference",
+                                                "parameters": {
+                                                    "schemaname": {
+                                                        "value": "@item().SCHEMA_NAME",
+                                                        "type": "Expression"
+                                                    },
+                                                    "tablename": {
+                                                        "value": "@item().TABLE_NAME",
+                                                        "type": "Expression"
+                                                    }
+                                                }
+                                            }
+                                        ],
+                                        "outputs": [
+                                            {
+                                                "referenceName": "DS_SYNAPSE01T",
+                                                "type": "DatasetReference",
+                                                "parameters": {
+                                                    "schemaname": {
+                                                        "value": "@item().SCHEMA_NAME",
+                                                        "type": "Expression"
+                                                    },
+                                                    "tablename": {
+                                                        "value": "@item().TABLE_NAME",
+                                                        "type": "Expression"
+                                                    }
+                                                }
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "name": "Generic Email Alert",
+                                        "type": "ExecutePipeline",
+                                        "dependsOn": [
+                                            {
+                                                "activity": "FULL LOAD BULKINSERT",
+                                                "dependencyConditions": [
+                                                    "Failed"
+                                                ]
+                                            }
+                                        ],
+                                        "userProperties": [],
+                                        "typeProperties": {
+                                            "pipeline": {
+                                                "referenceName": "Generic Email Alert",
+                                                "type": "PipelineReference"
+                                            },
+                                            "waitOnCompletion": true,
+                                            "parameters": {
+                                                "EmailTo": "aditya.rathi@chemours.com ; manojkumar.agarwal@chemours.com ; samridhi.kohli@chemours.com ; vishal.pundir@chemours.com",
+                                                "Message": {
+                                                    "value": "@concat('QA_CDW_Email_Alert: Pipeline DATA_REPLICATION_PIPELINE_QA failed for table - ',item().SCHEMA_NAME ,'.',item().TABLE_NAME)",
+                                                    "type": "Expression"
+                                                },
+                                                "Subject": {
+                                                    "value": "@concat('QA_CDW_Email_Alert: Pipeline DATA_REPLICATION_PIPELINE_QA failed for table - ',item().SCHEMA_NAME ,'.',item().TABLE_NAME)",
+                                                    "type": "Expression"
+                                                }
+                                            }
+                                        }
+                                    }
+                                ],
+                                "ifTrueActivities": [
+                                    {
+                                        "name": "DATA_REPLICATION_PIPELINE_QA_Logging_RECON_CHILD",
+                                        "description": "DATA_REPLICATION_PIPELINE_QA_Logging_RECON_CHILD",
+                                        "type": "ExecutePipeline",
+                                        "dependsOn": [],
+                                        "userProperties": [],
+                                        "typeProperties": {
+                                            "pipeline": {
+                                                "referenceName": "DATA_REPLICATION_PIPELINE_QA_Logging_RECON_CHILD",
+                                                "type": "PipelineReference"
+                                            },
+                                            "waitOnCompletion": true,
+                                            "parameters": {
+                                                "AuditOn": {
+                                                    "value": "@item().RECONAUDIT",
+                                                    "type": "Expression"
+                                                },
+                                                "TABLE_NAME": {
+                                                    "value": "@item().TABLE_NAME",
+                                                    "type": "Expression"
+                                                },
+                                                "SCHEMA_NAME": {
+                                                    "value": "@item().SCHEMA_NAME",
+                                                    "type": "Expression"
+                                                },
+                                                "KEYCOLUMN": {
+                                                    "value": "@item().KEYCOLUMN",
+                                                    "type": "Expression"
+                                                }
+                                            }
+                                        }
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "name": "Inititate Base Table Logging",
+                            "description": "",
+                            "type": "Lookup",
+                            "dependsOn": [],
+                            "policy": {
+                                "timeout": "0.12:00:00",
+                                "retry": 0,
+                                "retryIntervalInSeconds": 30,
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "userProperties": [],
+                            "typeProperties": {
+                                "source": {
+                                    "type": "SqlDWSource",
+                                    "sqlReaderQuery": {
+                                        "value": "@concat('Insert into  edw_CTRL.CDW_JOB_RUN_CDC_TABLE_STATUS (RunId,\tTableName,\tStartDate,\tEndDate,\tDuration,\tStatus) Select ',activity('Get RunID for Pipeline').output.firstRow.RunID,',''',item().TABLE_NAME,''',Getdate(), ''9999-12-31 00:00:00.000'', ''00:00:00'', ''STARTED'' ; select 1')",
+                                        "type": "Expression"
+                                    },
+                                    "queryTimeout": "02:00:00",
+                                    "partitionOption": "None"
+                                },
+                                "dataset": {
+                                    "referenceName": "DS_SYNAPSE01T",
+                                    "type": "DatasetReference",
+                                    "parameters": {
+                                        "schemaname": "na",
+                                        "tablename": "na"
+                                    }
+                                },
+                                "firstRowOnly": true
+                            }
+                        },
+                        {
+                            "name": "Update Base Table Logging Failed",
+                            "description": "",
+                            "type": "Lookup",
+                            "dependsOn": [
+                                {
+                                    "activity": "INCREMENTAL LOAD OR FULL LOAD CHECK",
+                                    "dependencyConditions": [
+                                        "Failed"
+                                    ]
+                                }
+                            ],
+                            "policy": {
+                                "timeout": "0.12:00:00",
+                                "retry": 0,
+                                "retryIntervalInSeconds": 30,
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "userProperties": [],
+                            "typeProperties": {
+                                "source": {
+                                    "type": "SqlDWSource",
+                                    "sqlReaderQuery": {
+                                        "value": "@concat('Update edw_Ctrl.CDW_JOB_RUN_CDC_TABLE_STATUS set Status = ''FAILED'' , EndDate = Getdate() , duration = CONVERT(VARCHAR(8),GETDATE()-STARTDATE,108)  where Runid =',activity('Get RunID for Pipeline').output.firstRow.RunID,' and TableName = ''',item().TABLE_NAME,''' ; Select 1 ')",
+                                        "type": "Expression"
+                                    },
+                                    "queryTimeout": "02:00:00",
+                                    "partitionOption": "None"
+                                },
+                                "dataset": {
+                                    "referenceName": "DS_SYNAPSE01T",
+                                    "type": "DatasetReference",
+                                    "parameters": {
+                                        "schemaname": "na",
+                                        "tablename": "na"
+                                    }
+                                },
+                                "firstRowOnly": true
+                            }
+                        },
+                        {
+                            "name": "Update Base Table Logging Success",
+                            "description": "",
+                            "type": "Lookup",
+                            "dependsOn": [
+                                {
+                                    "activity": "INCREMENTAL LOAD OR FULL LOAD CHECK",
+                                    "dependencyConditions": [
+                                        "Succeeded"
+                                    ]
+                                }
+                            ],
+                            "policy": {
+                                "timeout": "0.12:00:00",
+                                "retry": 0,
+                                "retryIntervalInSeconds": 30,
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "userProperties": [],
+                            "typeProperties": {
+                                "source": {
+                                    "type": "SqlDWSource",
+                                    "sqlReaderQuery": {
+                                        "value": "@concat('Update edw_Ctrl.CDW_JOB_RUN_CDC_TABLE_STATUS set Status = ''SUCCEEDED'' , EndDate = Getdate() , duration = CONVERT(VARCHAR(8),GETDATE()-STARTDATE,108)  where Runid =',activity('Get RunID for Pipeline').output.firstRow.RunID,' and TableName = ''',item().TABLE_NAME,''' ; Select 1 ')",
+                                        "type": "Expression"
+                                    },
+                                    "queryTimeout": "02:00:00",
+                                    "partitionOption": "None"
+                                },
+                                "dataset": {
+                                    "referenceName": "DS_SYNAPSE01T",
+                                    "type": "DatasetReference",
+                                    "parameters": {
+                                        "schemaname": "na",
+                                        "tablename": "na"
+                                    }
+                                },
+                                "firstRowOnly": true
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "name": "GET_TABLE_NAMES",
+                "description": "",
+                "type": "Lookup",
+                "dependsOn": [
+                    {
+                        "activity": "Initiate PL logging",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "source": {
+                        "type": "SqlDWSource",
+                        "sqlReaderQuery": {
+                            "value": "SELECT  * FROM EDW_DR.CONFIGTABLES_DR WHERE DELTALOADREQUIRED = 'Y'\n;",
+                            "type": "Expression"
+                        },
+                        "queryTimeout": "02:00:00",
+                        "partitionOption": "None"
+                    },
+                    "dataset": {
+                        "referenceName": "DS_SYNAPSE01T",
+                        "type": "DatasetReference",
+                        "parameters": {
+                            "schemaname": "na",
+                            "tablename": "na"
+                        }
+                    },
+                    "firstRowOnly": false
+                }
+            },
+            {
+                "name": "Get Object Metadata",
+                "description": "",
+                "type": "Lookup",
+                "dependsOn": [],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "source": {
+                        "type": "SqlDWSource",
+                        "sqlReaderQuery": "Select objectid as pipelineobjectid, objectname as pipelinename , EmailGroup as EmailGroup from edw_ctrl.cdw_objects  where objectname = 'DATA_REPLICATION_PIPELINE_QA' and objecttype ='PIPELINE';",
+                        "queryTimeout": "02:00:00",
+                        "partitionOption": "None"
+                    },
+                    "dataset": {
+                        "referenceName": "DS_SYNAPSE01T",
+                        "type": "DatasetReference",
+                        "parameters": {
+                            "schemaname": "na",
+                            "tablename": "na"
+                        }
+                    },
+                    "firstRowOnly": true
+                }
+            },
+            {
+                "name": "Get RunID for Pipeline",
+                "description": "",
+                "type": "Lookup",
+                "dependsOn": [
+                    {
+                        "activity": "Get Object Metadata",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "source": {
+                        "type": "SqlDWSource",
+                        "sqlReaderQuery": "declare @i int\nexec [edw_CTRL].[GetRunID] @RunID=@i OUTPUT;\nselect @i as RunID",
+                        "queryTimeout": "02:00:00",
+                        "partitionOption": "None"
+                    },
+                    "dataset": {
+                        "referenceName": "DS_SYNAPSE01T",
+                        "type": "DatasetReference",
+                        "parameters": {
+                            "schemaname": "na",
+                            "tablename": "na"
+                        }
+                    },
+                    "firstRowOnly": true
+                }
+            },
+            {
+                "name": "Initiate PL logging",
+                "description": "",
+                "type": "Lookup",
+                "dependsOn": [
+                    {
+                        "activity": "Get RunID for Pipeline",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "source": {
+                        "type": "SqlDWSource",
+                        "sqlReaderQuery": {
+                            "value": "@concat('Insert into  edw_Ctrl.CDW_Job_Run_Status (RunID, ObjectID, StartDate, EndDate, Duration, Status) Select ',activity('Get RunID for Pipeline').output.firstRow.RunID,',''',activity('Get Object Metadata').output.firstRow.pipelineobjectid,''',Getdate(), ''9999-12-31 00:00:00.000'', ''00:00:00'', ''STARTED'' ; select 1')",
+                            "type": "Expression"
+                        },
+                        "queryTimeout": "02:00:00",
+                        "partitionOption": "None"
+                    },
+                    "dataset": {
+                        "referenceName": "DS_SYNAPSE01T",
+                        "type": "DatasetReference",
+                        "parameters": {
+                            "schemaname": "na",
+                            "tablename": "na"
+                        }
+                    },
+                    "firstRowOnly": true
+                }
+            },
+            {
+                "name": "Update PL as Failed",
+                "description": "",
+                "type": "Lookup",
+                "dependsOn": [
+                    {
+                        "activity": "GET_TABLE_NAMES",
+                        "dependencyConditions": [
+                            "Failed"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "source": {
+                        "type": "SqlDWSource",
+                        "sqlReaderQuery": {
+                            "value": "@concat('Update edw_Ctrl.CDW_Job_Run_Status set Status = ''FAILED'' where Runid =',activity('Get RunID for Pipeline').output.firstRow.RunID,' and ObjectID = (Select top 1 OBJECTID From EDW_CTRL.CDW_OBJECTS  WHERE OBJECTNAME = ''DATA_REPLICATION_PIPELINE_QA'' AND OBJECTTYPE =''PIPELINE'') ; Select 1 ')",
+                            "type": "Expression"
+                        },
+                        "queryTimeout": "02:00:00",
+                        "partitionOption": "None"
+                    },
+                    "dataset": {
+                        "referenceName": "DS_SYNAPSE01T",
+                        "type": "DatasetReference",
+                        "parameters": {
+                            "schemaname": "na",
+                            "tablename": "na"
+                        }
+                    },
+                    "firstRowOnly": false
+                }
+            },
+            {
+                "name": "Update PL as Completed",
+                "description": "",
+                "type": "Lookup",
+                "dependsOn": [
+                    {
+                        "activity": "ForEach",
+                        "dependencyConditions": [
+                            "Completed"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "source": {
+                        "type": "SqlDWSource",
+                        "sqlReaderQuery": {
+                            "value": "@concat('DECLARE @RUNID INT\nDECLARE @OBJECTID VARCHAR(64)\nSET @OBJECTID = (SELECT TOP 1 OBJECTID FROM EDW_CTRL.CDW_OBJECTS  WHERE OBJECTNAME = ''DATA_REPLICATION_PIPELINE_QA'' AND OBJECTTYPE =''PIPELINE'')\nSET @RUNID = ',activity('Get RunID for Pipeline').output.firstRow.RunID,'\nIF NOT EXISTS (SELECT 1 FROM EDW_CTRL.CDW_JOB_RUN_CDC_TABLE_STATUS WHERE RUNID= @RUNID AND STATUS IN (''FAILED'',''STARTED''))\nBEGIN\nUPDATE EDW_CTRL.CDW_JOB_RUN_STATUS SET STATUS = ''SUCCEEDED'' , EndDate = Getdate() , duration = CONVERT(VARCHAR(8),GETDATE()-STARTDATE,108) WHERE RUNID =@RUNID AND OBJECTID = @OBJECTID\nEND \nELSE IF NOT EXISTS (SELECT 1 FROM EDW_CTRL.CDW_JOB_RUN_CDC_TABLE_STATUS WHERE RUNID= @RUNID AND STATUS IN (''SUCCEEDED''))\nBEGIN\nUPDATE EDW_CTRL.CDW_JOB_RUN_STATUS SET STATUS = ''FAILED'' , EndDate = Getdate() , duration = CONVERT(VARCHAR(8),GETDATE()-STARTDATE,108) WHERE RUNID =@RUNID AND OBJECTID = @OBJECTID\nEND\nELSE\nBEGIN\nUPDATE EDW_CTRL.CDW_JOB_RUN_STATUS SET STATUS = ''WARNING'' , EndDate = Getdate() , duration = CONVERT(VARCHAR(8),GETDATE()-STARTDATE,108) WHERE RUNID =@RUNID AND OBJECTID = @OBJECTID\nEND\n;\nSELECT 1')",
+                            "type": "Expression"
+                        },
+                        "queryTimeout": "02:00:00",
+                        "partitionOption": "None"
+                    },
+                    "dataset": {
+                        "referenceName": "DS_SYNAPSE01T",
+                        "type": "DatasetReference",
+                        "parameters": {
+                            "schemaname": "na",
+                            "tablename": "na"
+                        }
+                    },
+                    "firstRowOnly": false
+                }
+            }
+        ],
+        "folder": {
+            "name": "DATA_REPLICATION"
+        },
+        "annotations": [],
+        "lastPublishTime": "2023-09-14T14:52:55Z"
+    },
+    "type": "Microsoft.Synapse/workspaces/pipelines"
+}

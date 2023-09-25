@@ -36,7 +36,7 @@
         "parameters": {
             "EmailTo": {
                 "type": "string",
-                "defaultValue": "aditya.rathi@chemours.com"
+                "defaultValue": "manojkumar.agarwal@chemours.com"
             },
             "Message": {
                 "type": "string",
@@ -59,7 +59,7 @@
             }
         },
         "annotations": [],
-        "lastPublishTime": "2023-04-14T11:49:23Z"
+        "lastPublishTime": "2023-03-31T00:58:47Z"
     },
     "type": "Microsoft.Synapse/workspaces/pipelines"
 }
