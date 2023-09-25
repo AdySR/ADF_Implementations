@@ -1,0 +1,97 @@
+{
+    "name": "Controller_SAPR3_CDC_01P",
+    "properties": {
+        "activities": [
+            {
+                "name": "Check For Pipeline Execution Status",
+                "type": "Lookup",
+                "dependsOn": [],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 3,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "source": {
+                        "type": "SqlDWSource",
+                        "sqlReaderQuery": "Declare @RunID int = (Select IsNull(Max(RunID),0) RunID from   edw_CTRL.CDW_JOB_RUN_STATUS where objectID =(\nSelect ObjectID from edw_CTRL.CDW_OBJECTS where objecttype ='PIPELINE' and ObjectName ='SAPR3_CDC_01P'))\nDeclare @Status varchar(32) = IsNull((Select Status from edw_CTRL.CDW_JOB_RUN_STATUS where objectID =(\nSelect ObjectID from edw_CTRL.CDW_OBJECTS where objecttype ='PIPELINE' and ObjectName ='SAPR3_CDC_01P') and RunID=@RunID),'FirstRun')\nSelect @Status as Status;",
+                        "queryTimeout": "02:00:00",
+                        "partitionOption": "None"
+                    },
+                    "dataset": {
+                        "referenceName": "DS_01P_GENERIC_TABLE",
+                        "type": "DatasetReference",
+                        "parameters": {
+                            "TableName": "NA",
+                            "SchemaName": "NA"
+                        }
+                    }
+                }
+            },
+            {
+                "name": "Execute SAPR3_CDC_01P If Already Not Running",
+                "description": "Execute SAPR3_CDC_01P If Already Not Running",
+                "type": "IfCondition",
+                "dependsOn": [
+                    {
+                        "activity": "Check For Pipeline Execution Status",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "userProperties": [],
+                "typeProperties": {
+                    "expression": {
+                        "value": "@equals(activity('Check For Pipeline Execution Status').output.firstRow.Status,'STARTED')",
+                        "type": "Expression"
+                    },
+                    "ifFalseActivities": [
+                        {
+                            "name": "Execute SAPR3_CDC_01P",
+                            "type": "ExecutePipeline",
+                            "dependsOn": [],
+                            "userProperties": [],
+                            "typeProperties": {
+                                "pipeline": {
+                                    "referenceName": "SAPR3_CDC_01P",
+                                    "type": "PipelineReference"
+                                },
+                                "waitOnCompletion": true
+                            }
+                        }
+                    ],
+                    "ifTrueActivities": [
+                        {
+                            "name": "Generic Email Alert",
+                            "type": "ExecutePipeline",
+                            "dependsOn": [],
+                            "userProperties": [],
+                            "typeProperties": {
+                                "pipeline": {
+                                    "referenceName": "Generic Email Alert",
+                                    "type": "PipelineReference"
+                                },
+                                "waitOnCompletion": true,
+                                "parameters": {
+                                    "EmailTo": "aditya.rathi@chemours.com ; manojkumar.agarwal@chemours.com ; Vishal.pundir@chemours.com ; samridhi.kohli@chemours.com; e85f7ff8.chemours.onmicrosoft.com@amer.teams.ms, alka.khurana@chemours.com ",
+                                    "Message": "URGENT CDW_Email_Alert_Failure:: Pipeline -SAPR3_CDC_01P called off as its already Running",
+                                    "Subject": "URGENT CDW_Email_Alert_Failure:: Pipeline -SAPR3_CDC_01P called off as its already Running"
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        ],
+        "folder": {
+            "name": "Orchestration"
+        },
+        "annotations": [],
+        "lastPublishTime": "2023-09-20T09:03:52Z"
+    },
+    "type": "Microsoft.Synapse/workspaces/pipelines"
+}

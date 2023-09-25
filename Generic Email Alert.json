@@ -1,0 +1,65 @@
+{
+    "name": "Generic Email Alert",
+    "properties": {
+        "description": "Takes parameters- EmailTo, Message, Subject.",
+        "activities": [
+            {
+                "name": "Sends Email Alert",
+                "type": "WebActivity",
+                "dependsOn": [],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 1,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "url": "https://prod-04.centralus.logic.azure.com:443/workflows/44b5026c38e541de8a1b1ca0c12b3b49/triggers/manual/paths/invoke?api-version=2016-10-01&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=VCwoIKpN4tbztSScRY-K91Q2j6qHztySXk6TfteBhv0",
+                    "connectVia": {
+                        "referenceName": "Synapse-SHIR",
+                        "type": "IntegrationRuntimeReference"
+                    },
+                    "method": "POST",
+                    "headers": {
+                        "Content-Type": "application/json"
+                    },
+                    "body": {
+                        "value": "{\n\"EmailTo\":\"@{pipeline().parameters.EmailTo}\",\n\"Message\":\"@{pipeline().parameters.Message}\",\n\"Subject\":\"@{pipeline().parameters.Subject}\"\n}",
+                        "type": "Expression"
+                    },
+                    "disableCertValidation": false
+                }
+            }
+        ],
+        "parameters": {
+            "EmailTo": {
+                "type": "string",
+                "defaultValue": "aditya.rathi@chemours.com"
+            },
+            "Message": {
+                "type": "string",
+                "defaultValue": "test message"
+            },
+            "Subject": {
+                "type": "string",
+                "defaultValue": "test subject"
+            }
+        },
+        "variables": {
+            "errorDesc": {
+                "type": "String"
+            },
+            "errorCd": {
+                "type": "Array"
+            },
+            "body": {
+                "type": "String"
+            }
+        },
+        "annotations": [],
+        "lastPublishTime": "2023-04-14T11:49:23Z"
+    },
+    "type": "Microsoft.Synapse/workspaces/pipelines"
+}

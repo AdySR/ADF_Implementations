@@ -1,0 +1,623 @@
+{
+    "name": "CDC_Load_01P",
+    "properties": {
+        "activities": [
+            {
+                "name": "GetMapping_01P",
+                "type": "Lookup",
+                "dependsOn": [],
+                "policy": {
+                    "timeout": "7.00:00:00",
+                    "retry": 3,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "source": {
+                        "type": "SqlMISource",
+                        "sqlReaderQuery": {
+                            "value": "@concat('Select Table_Schema, Table_Name, concat(''['',replace(replace(Columns,'','',''],[''),'' '',''''),'']'') as Columns from ( Select TABLE_SCHEMA, TABLE_NAME     , Stuff(        (        Select '', '' + C.COLUMN_NAME        From INFORMATION_SCHEMA.COLUMNS As C        Where C.TABLE_SCHEMA = T.TABLE_SCHEMA And C.TABLE_NAME = T.TABLE_NAME        Order By C.ORDINAL_POSITION        For Xml Path('''')        ), 1, 2, '''') As Columns From INFORMATION_SCHEMA.TABLES As T where TABLE_NAME =''',pipeline().parameters.TableName,''')inQry')",
+                            "type": "Expression"
+                        },
+                        "partitionOption": "None"
+                    },
+                    "dataset": {
+                        "referenceName": "HANAPRODSLT_TBL",
+                        "type": "DatasetReference",
+                        "parameters": {
+                            "schema": "NA",
+                            "table": "NA"
+                        }
+                    }
+                }
+            },
+            {
+                "name": "To check whether INLINE issue is there or not in 01P",
+                "type": "Lookup",
+                "dependsOn": [
+                    {
+                        "activity": "Check Latest LSN Time",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 3,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "source": {
+                        "type": "SqlDWSource",
+                        "sqlReaderQuery": {
+                            "value": "SELECT COUNT(*) COUNT FROM EDW_DR.CONFIGTABLES WHERE SCHEMA_NAME = 'pipeline().parameters.Schema' AND TABLE_NAME = 'pipeline().parameters.TableName' AND INLINECHARFILE = 'Y';",
+                            "type": "Expression"
+                        },
+                        "queryTimeout": "02:00:00",
+                        "partitionOption": "None"
+                    },
+                    "dataset": {
+                        "referenceName": "DS_01P_GENERIC_TABLE",
+                        "type": "DatasetReference",
+                        "parameters": {
+                            "TableName": "NA",
+                            "SchemaName": "NA"
+                        }
+                    },
+                    "firstRowOnly": false
+                }
+            },
+            {
+                "name": "IF INLINE ISSUE 01P",
+                "type": "IfCondition",
+                "dependsOn": [
+                    {
+                        "activity": "To check whether INLINE issue is there or not in 01P",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "userProperties": [],
+                "typeProperties": {
+                    "expression": {
+                        "value": "@greater(activity('To check whether INLINE issue is there or not in 01P').output.value[0].COUNT,0)",
+                        "type": "Expression"
+                    },
+                    "ifFalseActivities": [
+                        {
+                            "name": "Copy changes to STG_01P",
+                            "type": "Copy",
+                            "dependsOn": [],
+                            "policy": {
+                                "timeout": "7.00:00:00",
+                                "retry": 3,
+                                "retryIntervalInSeconds": 30,
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "userProperties": [],
+                            "typeProperties": {
+                                "source": {
+                                    "type": "SqlMISource",
+                                    "sqlReaderQuery": {
+                                        "value": "@concat('DECLARE @begin_time datetime, @end_time datetime, @from_lsn binary(10), @to_lsn binary(10),@maxlsn binary(10); \nSET @begin_time = ''',pipeline().parameters.BeginTime,''';\nSET @end_time = getdate();\nSET @from_lsn = sys.fn_cdc_map_time_to_lsn(''smallest greater than or equal'', @begin_time);\nSET @to_lsn = sys.fn_cdc_map_time_to_lsn(''largest less than'', @end_time);\nselect @maxlsn= max(__$start_lsn) FROM cdc.fn_cdc_get_all_changes_dbo_',pipeline().parameters.TableName,'(@from_lsn, @to_lsn, ''all'')\nset @maxlsn=isnull(@maxlsn,@from_lsn)\nSELECT ',activity('GetMapping_01P').output.firstRow.Columns,',__$operation as OperationOnData,__$start_lsn as __$start_lsn FROM cdc.fn_cdc_get_all_changes_dbo_',pipeline().parameters.TableName,'(@from_lsn, @maxlsn, ''all'') where __$operation in (1,2,4) ')",
+                                        "type": "Expression"
+                                    },
+                                    "partitionOption": "None"
+                                },
+                                "sink": {
+                                    "type": "SqlDWSink",
+                                    "preCopyScript": {
+                                        "value": "@{concat('TRUNCATE TABLE SRC_SAP_R3.STG_',pipeline().parameters.TableName)}",
+                                        "type": "Expression"
+                                    },
+                                    "allowPolyBase": true,
+                                    "polyBaseSettings": {
+                                        "rejectValue": 0,
+                                        "rejectType": "value",
+                                        "useTypeDefault": true
+                                    },
+                                    "disableMetricsCollection": false
+                                },
+                                "enableStaging": true,
+                                "stagingSettings": {
+                                    "linkedServiceName": {
+                                        "referenceName": "ADLS_Stg_CDCLoad",
+                                        "type": "LinkedServiceReference"
+                                    },
+                                    "path": "celonisprod/Staging"
+                                }
+                            },
+                            "inputs": [
+                                {
+                                    "referenceName": "HANAPRODSLT_TBL",
+                                    "type": "DatasetReference",
+                                    "parameters": {
+                                        "schema": "NA",
+                                        "table": "NA"
+                                    }
+                                }
+                            ],
+                            "outputs": [
+                                {
+                                    "referenceName": "DS_01P_GENERIC_TABLE",
+                                    "type": "DatasetReference",
+                                    "parameters": {
+                                        "TableName": {
+                                            "value": "@concat('STG_',pipeline().parameters.TableName)",
+                                            "type": "Expression"
+                                        },
+                                        "SchemaName": {
+                                            "value": "@pipeline().parameters.Schema",
+                                            "type": "Expression"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    "ifTrueActivities": [
+                        {
+                            "name": "Copy to Storage for 01P",
+                            "type": "Copy",
+                            "dependsOn": [],
+                            "policy": {
+                                "timeout": "7.00:00:00",
+                                "retry": 3,
+                                "retryIntervalInSeconds": 30,
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "userProperties": [],
+                            "typeProperties": {
+                                "source": {
+                                    "type": "SqlMISource",
+                                    "sqlReaderQuery": {
+                                        "value": "@concat('DECLARE @begin_time datetime, @end_time datetime, @from_lsn binary(10), @to_lsn binary(10),@maxlsn binary(10); \nSET @begin_time = ''',pipeline().parameters.BeginTime,''';\nSET @end_time = getdate();\nSET @from_lsn = sys.fn_cdc_map_time_to_lsn(''smallest greater than or equal'', @begin_time);\nSET @to_lsn = sys.fn_cdc_map_time_to_lsn(''largest less than'', @end_time);\nselect @maxlsn= max(__$start_lsn) FROM cdc.fn_cdc_get_all_changes_dbo_',pipeline().parameters.TableName,'(@from_lsn, @to_lsn, ''all'')\nset @maxlsn=isnull(@maxlsn,@from_lsn)\nSELECT ',activity('GetMapping_01P').output.firstRow.Columns,',__$operation as OperationOnData,__$start_lsn as __$start_lsn FROM cdc.fn_cdc_get_all_changes_dbo_',pipeline().parameters.TableName,'(@from_lsn, @maxlsn, ''all'') where __$operation in (1,2,4) ')",
+                                        "type": "Expression"
+                                    },
+                                    "partitionOption": "None"
+                                },
+                                "sink": {
+                                    "type": "DelimitedTextSink",
+                                    "storeSettings": {
+                                        "type": "AzureBlobFSWriteSettings"
+                                    },
+                                    "formatSettings": {
+                                        "type": "DelimitedTextWriteSettings",
+                                        "quoteAllText": true,
+                                        "fileExtension": ".txt"
+                                    }
+                                },
+                                "enableStaging": true,
+                                "stagingSettings": {
+                                    "linkedServiceName": {
+                                        "referenceName": "ADLS_Stg_CDCLoad",
+                                        "type": "LinkedServiceReference"
+                                    },
+                                    "path": "celonisprod/Staging"
+                                }
+                            },
+                            "inputs": [
+                                {
+                                    "referenceName": "HANAPRODSLT_TBL",
+                                    "type": "DatasetReference",
+                                    "parameters": {
+                                        "schema": "NA",
+                                        "table": "NA"
+                                    }
+                                }
+                            ],
+                            "outputs": [
+                                {
+                                    "referenceName": "Dump_CDC_File",
+                                    "type": "DatasetReference",
+                                    "parameters": {
+                                        "filename": {
+                                            "value": "@concat(pipeline().parameters.TableName,'01PCDC')",
+                                            "type": "Expression"
+                                        }
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            "name": "Copy changes to STG_01PINLINE",
+                            "type": "Copy",
+                            "dependsOn": [
+                                {
+                                    "activity": "Copy to Storage for 01P",
+                                    "dependencyConditions": [
+                                        "Succeeded"
+                                    ]
+                                }
+                            ],
+                            "policy": {
+                                "timeout": "7.00:00:00",
+                                "retry": 3,
+                                "retryIntervalInSeconds": 30,
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "userProperties": [],
+                            "typeProperties": {
+                                "source": {
+                                    "type": "DelimitedTextSource",
+                                    "storeSettings": {
+                                        "type": "AzureBlobFSReadSettings",
+                                        "recursive": true,
+                                        "enablePartitionDiscovery": false
+                                    },
+                                    "formatSettings": {
+                                        "type": "DelimitedTextReadSettings"
+                                    }
+                                },
+                                "sink": {
+                                    "type": "SqlDWSink",
+                                    "preCopyScript": {
+                                        "value": "@{concat('TRUNCATE TABLE SRC_SAP_R3.STG_',pipeline().parameters.TableName)}",
+                                        "type": "Expression"
+                                    },
+                                    "allowCopyCommand": true,
+                                    "disableMetricsCollection": false
+                                },
+                                "enableStaging": true,
+                                "stagingSettings": {
+                                    "linkedServiceName": {
+                                        "referenceName": "ADLS_Stg_CDCLoad",
+                                        "type": "LinkedServiceReference"
+                                    },
+                                    "path": "celonisprod/Staging"
+                                }
+                            },
+                            "inputs": [
+                                {
+                                    "referenceName": "Dump_CDC_File",
+                                    "type": "DatasetReference",
+                                    "parameters": {
+                                        "filename": {
+                                            "value": "@concat(pipeline().parameters.TableName,'01PCDC')",
+                                            "type": "Expression"
+                                        }
+                                    }
+                                }
+                            ],
+                            "outputs": [
+                                {
+                                    "referenceName": "DS_01P_GENERIC_TABLE",
+                                    "type": "DatasetReference",
+                                    "parameters": {
+                                        "TableName": {
+                                            "value": "@concat('STG_',pipeline().parameters.TableName)",
+                                            "type": "Expression"
+                                        },
+                                        "SchemaName": {
+                                            "value": "@pipeline().parameters.Schema",
+                                            "type": "Expression"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    ]
+                }
+            },
+            {
+                "name": "SP insert status and Timestamp fail 01P",
+                "type": "SqlServerStoredProcedure",
+                "dependsOn": [
+                    {
+                        "activity": "IF INLINE ISSUE 01P",
+                        "dependencyConditions": [
+                            "Failed"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "7.00:00:00",
+                    "retry": 3,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "storedProcedureName": "Config_Data_Pipeline.CDC_PL_ExecutionTrack",
+                    "storedProcedureParameters": {
+                        "StartTime": {
+                            "value": {
+                                "value": "@pipeline().parameters.BeginTime",
+                                "type": "Expression"
+                            },
+                            "type": "Datetime"
+                        },
+                        "EndTime": {
+                            "value": {
+                                "value": "@activity('Check Latest LSN Time').output.firstRow.LatestLSNTime",
+                                "type": "Expression"
+                            },
+                            "type": "Datetime"
+                        },
+                        "RunStatus": {
+                            "value": "Failed",
+                            "type": "String"
+                        },
+                        "TableName": {
+                            "value": {
+                                "value": "@pipeline().parameters.TableName",
+                                "type": "Expression"
+                            },
+                            "type": "String"
+                        }
+                    }
+                },
+                "linkedServiceName": {
+                    "referenceName": "ccuse2synapse01p_ccSQLPool01",
+                    "type": "LinkedServiceReference"
+                }
+            },
+            {
+                "name": "Merge with tgt table 01P",
+                "type": "SqlServerStoredProcedure",
+                "dependsOn": [
+                    {
+                        "activity": "IF INLINE ISSUE 01P",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "7.00:00:00",
+                    "retry": 3,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "storedProcedureName": {
+                        "value": "EDW_DR.CDW_INGESTION_V3",
+                        "type": "Expression"
+                    },
+                    "storedProcedureParameters": {
+                        "targettablename": {
+                            "value": {
+                                "value": "@pipeline().parameters.TableName",
+                                "type": "Expression"
+                            },
+                            "type": "String"
+                        },
+                        "keycolumn": {
+                            "value": {
+                                "value": "@pipeline().parameters.KeyCols",
+                                "type": "Expression"
+                            },
+                            "type": "String"
+                        }
+                    }
+                },
+                "linkedServiceName": {
+                    "referenceName": "ccuse2synapse01p_ccSQLPool01",
+                    "type": "LinkedServiceReference"
+                }
+            },
+            {
+                "name": "SP insert status and Timestamp success",
+                "type": "SqlServerStoredProcedure",
+                "dependsOn": [
+                    {
+                        "activity": "Merge with tgt table 01P",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "7.00:00:00",
+                    "retry": 3,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "storedProcedureName": "Config_Data_Pipeline.CDC_PL_ExecutionTrack",
+                    "storedProcedureParameters": {
+                        "StartTime": {
+                            "value": {
+                                "value": "@pipeline().parameters.BeginTime",
+                                "type": "Expression"
+                            },
+                            "type": "Datetime"
+                        },
+                        "EndTime": {
+                            "value": {
+                                "value": "@activity('Check Latest LSN Time').output.firstRow.LatestLSNTime",
+                                "type": "Expression"
+                            },
+                            "type": "Datetime"
+                        },
+                        "RunStatus": {
+                            "value": "Success",
+                            "type": "String"
+                        },
+                        "TableName": {
+                            "value": {
+                                "value": "@pipeline().parameters.TableName",
+                                "type": "Expression"
+                            },
+                            "type": "String"
+                        }
+                    }
+                },
+                "linkedServiceName": {
+                    "referenceName": "ccuse2synapse01p_ccSQLPool01",
+                    "type": "LinkedServiceReference"
+                }
+            },
+            {
+                "name": "SP insert status and Timestamp fail 1",
+                "type": "SqlServerStoredProcedure",
+                "dependsOn": [
+                    {
+                        "activity": "Merge with tgt table 01P",
+                        "dependencyConditions": [
+                            "Failed"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "7.00:00:00",
+                    "retry": 3,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "storedProcedureName": "Config_Data_Pipeline.CDC_PL_ExecutionTrack",
+                    "storedProcedureParameters": {
+                        "StartTime": {
+                            "value": {
+                                "value": "@pipeline().parameters.BeginTime",
+                                "type": "Expression"
+                            },
+                            "type": "Datetime"
+                        },
+                        "EndTime": {
+                            "value": {
+                                "value": "@activity('Check Latest LSN Time').output.firstRow.LatestLSNTime",
+                                "type": "Expression"
+                            },
+                            "type": "Datetime"
+                        },
+                        "RunStatus": {
+                            "value": "Failed",
+                            "type": "String"
+                        },
+                        "TableName": {
+                            "value": {
+                                "value": "@pipeline().parameters.TableName",
+                                "type": "Expression"
+                            },
+                            "type": "String"
+                        }
+                    }
+                },
+                "linkedServiceName": {
+                    "referenceName": "ccuse2synapse01p_ccSQLPool01",
+                    "type": "LinkedServiceReference"
+                }
+            },
+            {
+                "name": "SRCTOSTG",
+                "type": "SqlServerStoredProcedure",
+                "dependsOn": [
+                    {
+                        "activity": "SP insert status and Timestamp success",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 3,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "storedProcedureName": {
+                        "value": "EDW_DR.SRCTOSTG",
+                        "type": "Expression"
+                    },
+                    "storedProcedureParameters": {
+                        "tablename": {
+                            "value": {
+                                "value": "@pipeline().parameters.TableName",
+                                "type": "Expression"
+                            },
+                            "type": "String"
+                        }
+                    }
+                },
+                "linkedServiceName": {
+                    "referenceName": "ccuse2synapse01p_ccSQLPool01",
+                    "type": "LinkedServiceReference"
+                }
+            },
+            {
+                "name": "Check Latest LSN Time",
+                "type": "Lookup",
+                "dependsOn": [
+                    {
+                        "activity": "GetMapping_01P",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "7.00:00:00",
+                    "retry": 3,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "source": {
+                        "type": "SqlMISource",
+                        "sqlReaderQuery": {
+                            "value": "@concat('DECLARE @begin_time datetime,@end_time datetime, @lasttime datetime,@from_lsn binary(10), @to_lsn binary(10),@maxlsn binary(10);\nSET @begin_time = ''',pipeline().parameters.BeginTime,''';\nSET @end_time = getdate();\nSET @from_lsn = sys.fn_cdc_map_time_to_lsn(''smallest greater than or equal'', @begin_time);\nSET @to_lsn = sys.fn_cdc_map_time_to_lsn(''largest less than'', @end_time);\nselect @maxlsn= max(__$start_lsn) FROM cdc.fn_cdc_get_all_changes_dbo_',pipeline().parameters.TableName,'(@from_lsn, @to_lsn, ''all'')\nset @maxlsn=isnull(@maxlsn,@from_lsn)\nselect sys.fn_cdc_map_lsn_to_time(@maxlsn) as LatestLSNTime')",
+                            "type": "Expression"
+                        },
+                        "partitionOption": "None"
+                    },
+                    "dataset": {
+                        "referenceName": "HANAPRODSLT_TBL",
+                        "type": "DatasetReference",
+                        "parameters": {
+                            "schema": "NA",
+                            "table": "NA"
+                        }
+                    }
+                }
+            }
+        ],
+        "parameters": {
+            "TableName": {
+                "type": "string",
+                "defaultValue": "VTTK"
+            },
+            "BeginTime": {
+                "type": "string",
+                "defaultValue": "2023-01-27T06:01:26.513Z"
+            },
+            "Schema": {
+                "type": "string",
+                "defaultValue": "SRC_SAP_R3"
+            },
+            "KeyCols": {
+                "type": "string",
+                "defaultValue": "MANDT,TKNUM"
+            }
+        },
+        "folder": {
+            "name": "DATA_REPLICATION"
+        },
+        "annotations": [],
+        "lastPublishTime": "2023-09-21T11:29:21Z"
+    },
+    "type": "Microsoft.Synapse/workspaces/pipelines"
+}

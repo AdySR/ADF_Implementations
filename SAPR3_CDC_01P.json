@@ -1,0 +1,616 @@
+{
+    "name": "SAPR3_CDC_01P",
+    "properties": {
+        "activities": [
+            {
+                "name": "Get CDC Table List",
+                "type": "Lookup",
+                "dependsOn": [
+                    {
+                        "activity": "Initiate PL logging",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 3,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "source": {
+                        "type": "SqlDWSource",
+                        "sqlReaderQuery": {
+                            "value": "SELECT A.SCHEMA_NAME,A.TABLE_NAME,A.KEYCOLUMN,A.DELTALOADREQUIRED,A.INLINECHARFILE, A.EMAILGROUP FROM EDW_DR.CONFIGTABLES A WHERE A.LOADTYPE ='I' AND DELTALOADREQUIRED ='Y' ;",
+                            "type": "Expression"
+                        },
+                        "queryTimeout": "02:00:00",
+                        "partitionOption": "None"
+                    },
+                    "dataset": {
+                        "referenceName": "DS_01P_GENERIC_TABLE",
+                        "type": "DatasetReference",
+                        "parameters": {
+                            "TableName": "NA",
+                            "SchemaName": "NA"
+                        }
+                    },
+                    "firstRowOnly": false
+                }
+            },
+            {
+                "name": "ForEach",
+                "type": "ForEach",
+                "dependsOn": [
+                    {
+                        "activity": "Get CDC Table List",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "userProperties": [],
+                "typeProperties": {
+                    "items": {
+                        "value": "@activity('Get CDC Table List').output.value",
+                        "type": "Expression"
+                    },
+                    "isSequential": false,
+                    "batchCount": 6,
+                    "activities": [
+                        {
+                            "name": "check the last successful run time 01P",
+                            "type": "Lookup",
+                            "dependsOn": [],
+                            "policy": {
+                                "timeout": "7.00:00:00",
+                                "retry": 3,
+                                "retryIntervalInSeconds": 30,
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "userProperties": [],
+                            "typeProperties": {
+                                "source": {
+                                    "type": "SqlDWSource",
+                                    "sqlReaderStoredProcedureName": "Config_Data_Pipeline.Get_Last_RunTime_CDC",
+                                    "storedProcedureParameters": {
+                                        "TableName": {
+                                            "type": "String",
+                                            "value": {
+                                                "value": "@item().TABLE_NAME",
+                                                "type": "Expression"
+                                            }
+                                        }
+                                    },
+                                    "queryTimeout": "02:00:00",
+                                    "partitionOption": "None"
+                                },
+                                "dataset": {
+                                    "referenceName": "DS_01P_GENERIC_TABLE",
+                                    "type": "DatasetReference",
+                                    "parameters": {
+                                        "TableName": "NA",
+                                        "SchemaName": "NA"
+                                    }
+                                }
+                            }
+                        },
+                        {
+                            "name": "Check change count",
+                            "type": "Lookup",
+                            "dependsOn": [
+                                {
+                                    "activity": "check the last successful run time 01P",
+                                    "dependencyConditions": [
+                                        "Succeeded"
+                                    ]
+                                }
+                            ],
+                            "policy": {
+                                "timeout": "7.00:00:00",
+                                "retry": 3,
+                                "retryIntervalInSeconds": 30,
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "userProperties": [],
+                            "typeProperties": {
+                                "source": {
+                                    "type": "SqlMISource",
+                                    "sqlReaderQuery": {
+                                        "value": "@concat('DECLARE @begin_time datetime,@end_time datetime, @lasttime datetime,@from_lsn binary(10), @to_lsn binary(10),@maxlsn binary(10);\nSET @begin_time = ''',activity('check the last successful run time 01P').output.firstRow.PL_EndTime,''';\nSET @end_time = getdate();\nSET @from_lsn = sys.fn_cdc_map_time_to_lsn(''smallest greater than or equal'', @begin_time);\nSET @to_lsn = sys.fn_cdc_map_time_to_lsn(''largest less than'', @end_time);\nselect @maxlsn= max(__$start_lsn) FROM cdc.fn_cdc_get_all_changes_dbo_',item().TABLE_NAME,'(@from_lsn, @to_lsn, ''all'')\nset @maxlsn=isnull(@maxlsn,@from_lsn)\nSELECT count(1) changecount FROM cdc.fn_cdc_get_all_changes_dbo_',item().TABLE_NAME,'(@from_lsn, @maxlsn, ''all'') where __$operation in (1,2,4) ')",
+                                        "type": "Expression"
+                                    },
+                                    "partitionOption": "None"
+                                },
+                                "dataset": {
+                                    "referenceName": "HANAPRODSLT_TBL",
+                                    "type": "DatasetReference",
+                                    "parameters": {
+                                        "schema": "dbo",
+                                        "table": "VBAP"
+                                    }
+                                }
+                            }
+                        },
+                        {
+                            "name": "If Count is greater than 0",
+                            "type": "IfCondition",
+                            "dependsOn": [
+                                {
+                                    "activity": "Check change count",
+                                    "dependencyConditions": [
+                                        "Succeeded"
+                                    ]
+                                }
+                            ],
+                            "userProperties": [],
+                            "typeProperties": {
+                                "expression": {
+                                    "value": "@greater(int(activity('Check change count').output.firstRow.changecount),0)",
+                                    "type": "Expression"
+                                },
+                                "ifTrueActivities": [
+                                    {
+                                        "name": "Execute Pipeline CDC Load",
+                                        "type": "ExecutePipeline",
+                                        "dependsOn": [
+                                            {
+                                                "activity": "Inititate Base Table Logging",
+                                                "dependencyConditions": [
+                                                    "Succeeded"
+                                                ]
+                                            }
+                                        ],
+                                        "userProperties": [],
+                                        "typeProperties": {
+                                            "pipeline": {
+                                                "referenceName": "CDC_Load_01P",
+                                                "type": "PipelineReference"
+                                            },
+                                            "waitOnCompletion": true,
+                                            "parameters": {
+                                                "TableName": {
+                                                    "value": "@item().TABLE_NAME",
+                                                    "type": "Expression"
+                                                },
+                                                "BeginTime": {
+                                                    "value": "@activity('check the last successful run time 01P').output.firstRow.PL_EndTime",
+                                                    "type": "Expression"
+                                                },
+                                                "Schema": {
+                                                    "value": "@item().SCHEMA_NAME",
+                                                    "type": "Expression"
+                                                },
+                                                "KeyCols": {
+                                                    "value": "@item().KEYCOLUMN",
+                                                    "type": "Expression"
+                                                }
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "name": "Inititate Base Table Logging",
+                                        "type": "Lookup",
+                                        "dependsOn": [],
+                                        "policy": {
+                                            "timeout": "0.12:00:00",
+                                            "retry": 3,
+                                            "retryIntervalInSeconds": 30,
+                                            "secureOutput": false,
+                                            "secureInput": false
+                                        },
+                                        "userProperties": [],
+                                        "typeProperties": {
+                                            "source": {
+                                                "type": "SqlDWSource",
+                                                "sqlReaderQuery": {
+                                                    "value": "@concat('Insert into  edw_CTRL.CDW_JOB_RUN_CDC_TABLE_STATUS (RunId,\tTableName,\tStartDate,\tEndDate,\tDuration,\tStatus) Select ',activity('Get RunID for Pipeline').output.firstRow.RunID,',''',item().TABLE_NAME,''',Getdate(), ''9999-12-31 00:00:00.000'', ''00:00:00'', ''STARTED'' ; select 1')",
+                                                    "type": "Expression"
+                                                },
+                                                "queryTimeout": "02:00:00",
+                                                "partitionOption": "None"
+                                            },
+                                            "dataset": {
+                                                "referenceName": "DS_01P_GENERIC_TABLE",
+                                                "type": "DatasetReference",
+                                                "parameters": {
+                                                    "TableName": "NA",
+                                                    "SchemaName": "NA"
+                                                }
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "name": "Update Base Table Logging Failed",
+                                        "type": "Lookup",
+                                        "dependsOn": [
+                                            {
+                                                "activity": "Execute Pipeline CDC Load",
+                                                "dependencyConditions": [
+                                                    "Failed"
+                                                ]
+                                            }
+                                        ],
+                                        "policy": {
+                                            "timeout": "0.12:00:00",
+                                            "retry": 3,
+                                            "retryIntervalInSeconds": 30,
+                                            "secureOutput": false,
+                                            "secureInput": false
+                                        },
+                                        "userProperties": [],
+                                        "typeProperties": {
+                                            "source": {
+                                                "type": "SqlDWSource",
+                                                "sqlReaderQuery": {
+                                                    "value": "@concat('Update edw_Ctrl.CDW_JOB_RUN_CDC_TABLE_STATUS set Status = ''FAILED'' , EndDate = Getdate() , duration = CONVERT(VARCHAR(8),GETDATE()-STARTDATE,108)  where Runid =',activity('Get RunID for Pipeline').output.firstRow.RunID,' and TableName = ''',item().TABLE_NAME,''' ; Select 1 ')",
+                                                    "type": "Expression"
+                                                },
+                                                "queryTimeout": "02:00:00",
+                                                "partitionOption": "None"
+                                            },
+                                            "dataset": {
+                                                "referenceName": "DS_01P_GENERIC_TABLE",
+                                                "type": "DatasetReference",
+                                                "parameters": {
+                                                    "TableName": "NA",
+                                                    "SchemaName": "NA"
+                                                }
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "name": "Update Base Table Logging Success",
+                                        "type": "Lookup",
+                                        "dependsOn": [
+                                            {
+                                                "activity": "Execute Pipeline CDC Load",
+                                                "dependencyConditions": [
+                                                    "Succeeded"
+                                                ]
+                                            }
+                                        ],
+                                        "policy": {
+                                            "timeout": "0.12:00:00",
+                                            "retry": 3,
+                                            "retryIntervalInSeconds": 30,
+                                            "secureOutput": false,
+                                            "secureInput": false
+                                        },
+                                        "userProperties": [],
+                                        "typeProperties": {
+                                            "source": {
+                                                "type": "SqlDWSource",
+                                                "sqlReaderQuery": {
+                                                    "value": "@concat('Update edw_Ctrl.CDW_JOB_RUN_CDC_TABLE_STATUS set Status = ''SUCCEEDED'' , EndDate = Getdate() , duration = CONVERT(VARCHAR(8),GETDATE()-STARTDATE,108)  where Runid =',activity('Get RunID for Pipeline').output.firstRow.RunID,' and TableName = ''',item().TABLE_NAME,''' ; Select 1 ')",
+                                                    "type": "Expression"
+                                                },
+                                                "queryTimeout": "02:00:00",
+                                                "partitionOption": "None"
+                                            },
+                                            "dataset": {
+                                                "referenceName": "DS_01P_GENERIC_TABLE",
+                                                "type": "DatasetReference",
+                                                "parameters": {
+                                                    "TableName": "NA",
+                                                    "SchemaName": "NA"
+                                                }
+                                            }
+                                        }
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "name": "Generic Email Alert INC_2",
+                            "type": "ExecutePipeline",
+                            "dependsOn": [
+                                {
+                                    "activity": "If Count is greater than 0",
+                                    "dependencyConditions": [
+                                        "Failed"
+                                    ]
+                                }
+                            ],
+                            "userProperties": [],
+                            "typeProperties": {
+                                "pipeline": {
+                                    "referenceName": "Generic Email Alert",
+                                    "type": "PipelineReference"
+                                },
+                                "waitOnCompletion": true,
+                                "parameters": {
+                                    "EmailTo": {
+                                        "value": "@item().EMAILGROUP",
+                                        "type": "Expression"
+                                    },
+                                    "Message": {
+                                        "value": "@concat('CDW_Email_Alert_Failure:: Pipeline -SAPR3_CDC_01P for INCREMENTAL-LOAD Container at instance for Table - ',item().TABLE_NAME)",
+                                        "type": "Expression"
+                                    },
+                                    "Subject": {
+                                        "value": "@concat('CDW_Email_Alert_Failure:: Pipeline -SAPR3_CDC_01P for INCREMENTAL-LOAD Container at instance for Table - ',item().TABLE_NAME)",
+                                        "type": "Expression"
+                                    }
+                                }
+                            }
+                        },
+                        {
+                            "name": "Generic Email Alert INC_1",
+                            "type": "ExecutePipeline",
+                            "dependsOn": [
+                                {
+                                    "activity": "Check change count",
+                                    "dependencyConditions": [
+                                        "Failed"
+                                    ]
+                                }
+                            ],
+                            "userProperties": [],
+                            "typeProperties": {
+                                "pipeline": {
+                                    "referenceName": "Generic Email Alert",
+                                    "type": "PipelineReference"
+                                },
+                                "waitOnCompletion": true,
+                                "parameters": {
+                                    "EmailTo": {
+                                        "value": "@item().EMAILGROUP",
+                                        "type": "Expression"
+                                    },
+                                    "Message": {
+                                        "value": "@concat('CDW_Email_Alert_Failure:: Pipeline -SAPR3_CDC_01P for INCREMENTAL-LOAD Container at instance for Table - ',item().TABLE_NAME)",
+                                        "type": "Expression"
+                                    },
+                                    "Subject": {
+                                        "value": "@concat('CDW_Email_Alert_Failure:: Pipeline -SAPR3_CDC_01P for INCREMENTAL-LOAD Container at instance for Table - ',item().TABLE_NAME)",
+                                        "type": "Expression"
+                                    }
+                                }
+                            }
+                        },
+                        {
+                            "name": "Generic Email Alert INC_0",
+                            "type": "ExecutePipeline",
+                            "dependsOn": [
+                                {
+                                    "activity": "check the last successful run time 01P",
+                                    "dependencyConditions": [
+                                        "Failed"
+                                    ]
+                                }
+                            ],
+                            "userProperties": [],
+                            "typeProperties": {
+                                "pipeline": {
+                                    "referenceName": "Generic Email Alert",
+                                    "type": "PipelineReference"
+                                },
+                                "waitOnCompletion": true,
+                                "parameters": {
+                                    "EmailTo": {
+                                        "value": "@item().EMAILGROUP",
+                                        "type": "Expression"
+                                    },
+                                    "Message": {
+                                        "value": "@concat('CDW_Email_Alert_Failure:: Pipeline -SAPR3_CDC_01P for INCREMENTAL-LOAD Container at instance for Table - ',item().TABLE_NAME)",
+                                        "type": "Expression"
+                                    },
+                                    "Subject": {
+                                        "value": "@concat('CDW_Email_Alert_Failure:: Pipeline -SAPR3_CDC_01P for INCREMENTAL-LOAD Container at instance for Table - ',item().TABLE_NAME)",
+                                        "type": "Expression"
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "name": "Initiate PL logging",
+                "type": "Lookup",
+                "dependsOn": [
+                    {
+                        "activity": "Get RunID for Pipeline",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 3,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "source": {
+                        "type": "SqlDWSource",
+                        "sqlReaderQuery": {
+                            "value": "@concat('Insert into  edw_Ctrl.CDW_Job_Run_Status (RunID, ObjectID, StartDate, EndDate, Duration, Status) Select ',activity('Get RunID for Pipeline').output.firstRow.RunID,',''',activity('Get Object Metadata').output.firstRow.pipelineobjectid,''',Getdate(), ''9999-12-31 00:00:00.000'', ''00:00:00'', ''STARTED'' ; select 1')",
+                            "type": "Expression"
+                        },
+                        "queryTimeout": "02:00:00",
+                        "partitionOption": "None"
+                    },
+                    "dataset": {
+                        "referenceName": "DS_01P_GENERIC_TABLE",
+                        "type": "DatasetReference",
+                        "parameters": {
+                            "TableName": "NA",
+                            "SchemaName": "NA"
+                        }
+                    }
+                }
+            },
+            {
+                "name": "Get RunID for Pipeline",
+                "type": "Lookup",
+                "dependsOn": [
+                    {
+                        "activity": "Get Object Metadata",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 3,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "source": {
+                        "type": "SqlDWSource",
+                        "sqlReaderQuery": "declare @i int\nexec [edw_CTRL].[GetRunID] @RunID=@i OUTPUT;\nselect @i as RunID",
+                        "queryTimeout": "02:00:00",
+                        "partitionOption": "None"
+                    },
+                    "dataset": {
+                        "referenceName": "DS_01P_GENERIC_TABLE",
+                        "type": "DatasetReference",
+                        "parameters": {
+                            "TableName": "NA",
+                            "SchemaName": "NA"
+                        }
+                    }
+                }
+            },
+            {
+                "name": "Get Object Metadata",
+                "type": "Lookup",
+                "dependsOn": [],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 3,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "source": {
+                        "type": "SqlDWSource",
+                        "sqlReaderQuery": "Select objectid as pipelineobjectid, objectname as pipelinename , EmailGroup as EmailGroup from edw_ctrl.cdw_objects  where objectname = 'SAPR3_CDC_01P' and objecttype ='PIPELINE'",
+                        "queryTimeout": "02:00:00",
+                        "partitionOption": "None"
+                    },
+                    "dataset": {
+                        "referenceName": "DS_01P_GENERIC_TABLE",
+                        "type": "DatasetReference",
+                        "parameters": {
+                            "TableName": "NA",
+                            "SchemaName": "NA"
+                        }
+                    }
+                }
+            },
+            {
+                "name": "Update PL as Failed",
+                "type": "Lookup",
+                "dependsOn": [
+                    {
+                        "activity": "Get CDC Table List",
+                        "dependencyConditions": [
+                            "Failed"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 3,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "source": {
+                        "type": "SqlDWSource",
+                        "sqlReaderQuery": {
+                            "value": "@concat('Update edw_Ctrl.CDW_Job_Run_Status set Status = ''FAILED'' where Runid =',activity('Get RunID for Pipeline').output.firstRow.RunID,' and ObjectID = (Select top 1 OBJECTID From EDW_CTRL.CDW_OBJECTS  WHERE OBJECTNAME = ''SAPR3_CDC_01P'' AND OBJECTTYPE =''PIPELINE'') ; Select 1 ')",
+                            "type": "Expression"
+                        },
+                        "queryTimeout": "02:00:00",
+                        "partitionOption": "None"
+                    },
+                    "dataset": {
+                        "referenceName": "DS_01P_GENERIC_TABLE",
+                        "type": "DatasetReference",
+                        "parameters": {
+                            "TableName": "NA",
+                            "SchemaName": "NA"
+                        }
+                    }
+                }
+            },
+            {
+                "name": "Update PL as Completed",
+                "type": "Lookup",
+                "dependsOn": [
+                    {
+                        "activity": "ForEach",
+                        "dependencyConditions": [
+                            "Completed"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 3,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "source": {
+                        "type": "SqlDWSource",
+                        "sqlReaderQuery": {
+                            "value": "@concat('DECLARE @RUNID INT\nDECLARE @OBJECTID VARCHAR(64)\nSET @OBJECTID = (SELECT TOP 1 OBJECTID FROM EDW_CTRL.CDW_OBJECTS  WHERE OBJECTNAME = ''SAPR3_CDC_01P'' AND OBJECTTYPE =''PIPELINE'')\nSET @RUNID = ',activity('Get RunID for Pipeline').output.firstRow.RunID,'\nIF NOT EXISTS (SELECT 1 FROM EDW_CTRL.CDW_JOB_RUN_CDC_TABLE_STATUS WHERE RUNID= @RUNID AND STATUS IN (''FAILED'',''STARTED''))\nBEGIN\nUPDATE EDW_CTRL.CDW_JOB_RUN_STATUS SET STATUS = ''SUCCEEDED'' , EndDate = Getdate() , duration = CONVERT(VARCHAR(8),GETDATE()-STARTDATE,108) WHERE RUNID =@RUNID AND OBJECTID = @OBJECTID\nEND \nELSE IF NOT EXISTS (SELECT 1 FROM EDW_CTRL.CDW_JOB_RUN_CDC_TABLE_STATUS WHERE RUNID= @RUNID AND STATUS IN (''SUCCEEDED''))\nBEGIN\nUPDATE EDW_CTRL.CDW_JOB_RUN_STATUS SET STATUS = ''FAILED'' , EndDate = Getdate() , duration = CONVERT(VARCHAR(8),GETDATE()-STARTDATE,108) WHERE RUNID =@RUNID AND OBJECTID = @OBJECTID\nEND\nELSE\nBEGIN\nUPDATE EDW_CTRL.CDW_JOB_RUN_STATUS SET STATUS = ''WARNING'' , EndDate = Getdate() , duration = CONVERT(VARCHAR(8),GETDATE()-STARTDATE,108) WHERE RUNID =@RUNID AND OBJECTID = @OBJECTID\nEND\n;\nSELECT 1')",
+                            "type": "Expression"
+                        },
+                        "queryTimeout": "02:00:00",
+                        "partitionOption": "None"
+                    },
+                    "dataset": {
+                        "referenceName": "DS_01P_GENERIC_TABLE",
+                        "type": "DatasetReference",
+                        "parameters": {
+                            "TableName": "NA",
+                            "SchemaName": "NA"
+                        }
+                    }
+                }
+            }
+        ],
+        "variables": {
+            "tables": {
+                "type": "String"
+            },
+            "schema": {
+                "type": "String"
+            },
+            "KeyCols": {
+                "type": "String"
+            }
+        },
+        "folder": {
+            "name": "DATA_REPLICATION"
+        },
+        "annotations": [],
+        "lastPublishTime": "2023-09-22T07:39:37Z"
+    },
+    "type": "Microsoft.Synapse/workspaces/pipelines"
+}
